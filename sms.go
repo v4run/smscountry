@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -14,7 +15,7 @@ import (
 
 // Defines the different endpoints in SMS country
 const (
-	SMSCountryScheme = `http`
+	SMSCountryScheme = `https`
 	SMSCountryHost   = `api.smscountry.com`
 	MessagePath      = `/SMSCwebservice_bulk.aspx`
 	BulMessagePath   = `/SMSCwebservice_bulk.aspx`
@@ -106,7 +107,40 @@ type Sender struct {
 	SenderID string
 }
 
-func (s *Sender) sendMessage(message string, mobileNumber string, deliveryReport bool) (err error) {
+func (s *Sender) sendMessage(path string, content io.Reader) (err error) {
+	if resp, er := s.Client.httpClient.Post((&url.URL{
+		Host:   SMSCountryHost,
+		Path:   path,
+		Scheme: SMSCountryScheme,
+	}).String(), "application/x-www-form-urlencoded", content); er != nil {
+		err = er
+	} else {
+		if resp.Body == nil {
+			return ErrEmptyResponse
+		}
+		defer func(e *error) {
+			if err := resp.Body.Close(); err != nil {
+				if e == nil || *e == nil {
+					*e = err
+				} else {
+					*e = fmt.Errorf("Error: %v, Body close error: %v", *e, err)
+				}
+			}
+		}(&err)
+		if r, er := ioutil.ReadAll(resp.Body); er != nil {
+			err = er
+		} else {
+			response := strings.TrimSpace(string(r))
+			if !strings.HasPrefix(response, "OK:") && response != "SMS message(s) sent" {
+				return fmt.Errorf("Error sending SMS. Response: %s", response)
+			}
+		}
+	}
+	return nil
+}
+
+// SendSMS sends an SMS to the recipient
+func (s *Sender) SendSMS(message, mobileNumber string, deliveryReport bool) (err error) {
 	query := url.Values{}
 	query.Add(User, s.Client.User)
 	query.Add(Password, s.Client.Password)
@@ -119,38 +153,11 @@ func (s *Sender) sendMessage(message string, mobileNumber string, deliveryReport
 	} else {
 		query.Add(DeliveryReport, DontSendDeliveryReport)
 	}
-	if resp, er := s.Client.httpClient.Get((&url.URL{
-		Host:     SMSCountryHost,
-		Path:     MessagePath,
-		Scheme:   SMSCountryScheme,
-		RawQuery: query.Encode(),
-	}).String()); er != nil {
-		err = er
-	} else {
-		if resp.Body == nil {
-			return ErrEmptyResponse
-		}
-		defer func(e *error) {
-			if err := resp.Body.Close(); err != nil {
-				if e == nil || *e == nil {
-					*e = err
-				} else {
-					*e = fmt.Errorf("Error: %v, Body close error: %v", *e, err)
-				}
-			}
-		}(&err)
-		if r, er := ioutil.ReadAll(resp.Body); er != nil {
-			err = er
-		} else {
-			if strings.HasPrefix(string(r), "ERROR:") {
-				return errors.New(strings.TrimPrefix(string(r), "ERROR:"))
-			}
-		}
-	}
-	return nil
+	return s.sendMessage(MessagePath, strings.NewReader(query.Encode()))
 }
 
-func (s *Sender) sendBulkSMS(messages, mobileNumbers []string, deliveryReport bool) (err error) {
+// SendBulkSMS sends an SMS to the recipient
+func (s *Sender) SendBulkSMS(messages, mobileNumbers []string, deliveryReport bool) (err error) {
 	msgBuf := new(bytes.Buffer)
 	msgBuf.WriteString(fmt.Sprintf("%s^%s", mobileNumbers[0], messages[0]))
 	for i := 1; i < len(messages); i++ {
@@ -162,57 +169,7 @@ func (s *Sender) sendBulkSMS(messages, mobileNumbers []string, deliveryReport bo
 	query.Add(SenderID, s.SenderID)
 	query.Add(MultiMessage, msgBuf.String())
 	query.Add(MessageType, NormalMessage)
-	if deliveryReport {
-		query.Add(DeliveryReport, SendDeliveryReport)
-	} else {
-		query.Add(DeliveryReport, DontSendDeliveryReport)
-	}
-	if resp, er := s.Client.httpClient.Get((&url.URL{
-		Host:     SMSCountryHost,
-		Path:     MultiMessagePath,
-		Scheme:   SMSCountryScheme,
-		RawQuery: query.Encode(),
-	}).String()); er != nil {
-		err = er
-	} else {
-		if resp.Body == nil {
-			return ErrEmptyResponse
-		}
-		defer func(e *error) {
-			if err := resp.Body.Close(); err != nil {
-				if e == nil || *e == nil {
-					*e = err
-				} else {
-					*e = fmt.Errorf("Error: %v, Body close error: %v", *e, err)
-				}
-			}
-		}(&err)
-		if r, er := ioutil.ReadAll(resp.Body); er != nil {
-			err = er
-		} else {
-			if strings.HasPrefix(string(r), "ERROR:") {
-				return errors.New(strings.TrimPrefix(string(r), "ERROR:"))
-			}
-		}
-	}
-	return nil
-}
-
-func split(s string, pivot int) (string, string) {
-	if len(s) < pivot {
-		pivot = len(s)
-	}
-	return s[:pivot], s[pivot:]
-}
-
-// SendSMS sends an SMS to the recipient
-func (s *Sender) SendSMS(message, mobileNumber string, deliveryReport bool) (err error) {
-	return s.sendMessage(message, mobileNumber, deliveryReport)
-}
-
-// SendBulkSMS sends an SMS to the recipient
-func (s *Sender) SendBulkSMS(message, mobileNumbers []string, deliveryReport bool) (err error) {
-	return s.sendBulkSMS(message, mobileNumbers, deliveryReport)
+	return s.sendMessage(MultiMessagePath, strings.NewReader(query.Encode()))
 }
 
 // New returns a new instance of Client
