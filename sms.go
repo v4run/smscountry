@@ -142,7 +142,6 @@ func (s *Sender) sendMessage(message string, mobileNumber string, deliveryReport
 		if r, er := ioutil.ReadAll(resp.Body); er != nil {
 			err = er
 		} else {
-			fmt.Println(string(r))
 			if strings.HasPrefix(string(r), "ERROR:") {
 				return errors.New(strings.TrimPrefix(string(r), "ERROR:"))
 			}
@@ -168,12 +167,6 @@ func (s *Sender) sendBulkSMS(messages, mobileNumbers []string, deliveryReport bo
 	} else {
 		query.Add(DeliveryReport, DontSendDeliveryReport)
 	}
-	fmt.Println((&url.URL{
-		Host:     SMSCountryHost,
-		Path:     MessagePath,
-		Scheme:   SMSCountryScheme,
-		RawQuery: query.Encode(),
-	}).String())
 	if resp, er := s.Client.httpClient.Get((&url.URL{
 		Host:     SMSCountryHost,
 		Path:     MultiMessagePath,
@@ -197,7 +190,6 @@ func (s *Sender) sendBulkSMS(messages, mobileNumbers []string, deliveryReport bo
 		if r, er := ioutil.ReadAll(resp.Body); er != nil {
 			err = er
 		} else {
-			fmt.Println(string(r))
 			if strings.HasPrefix(string(r), "ERROR:") {
 				return errors.New(strings.TrimPrefix(string(r), "ERROR:"))
 			}
